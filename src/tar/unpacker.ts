@@ -13,12 +13,15 @@ import type { DecoderOptions, TarHeader } from "./types";
 const STATE_HEADER = 0;
 const STATE_BODY = 1;
 
+const truncateErr = new Error("Tar archive is truncated.");
+
 export function createUnpacker(options: DecoderOptions = {}) {
 	const strict = options.strict ?? false;
 	const { available, peek, push, discard, pull } = createChunkQueue();
 
 	let state: 0 | 1 = STATE_HEADER;
 	let ended = false;
+	let done = false;
 	let eof = false;
 
 	let currentEntry: {
@@ -32,6 +35,10 @@ export function createUnpacker(options: DecoderOptions = {}) {
 
 	const unpacker = {
 		isEntryActive: (): boolean => state === STATE_BODY,
+
+		/** Checks if the body of the current entry has been fully consumed. */
+		isBodyComplete: (): boolean =>
+			!currentEntry || currentEntry.remaining === 0,
 
 		/** Add data to the internal buffer. */
 		write(chunk: Uint8Array): void {
@@ -52,17 +59,16 @@ export function createUnpacker(options: DecoderOptions = {}) {
 		readHeader(): TarHeader | null | undefined {
 			if (state !== STATE_HEADER)
 				throw new Error("Cannot read header while an entry is active");
-			if (eof) return undefined;
+			if (done) return undefined;
 
-			while (!eof) {
+			while (!done) {
 				// Check if we have enough data for at least one header.
 				if (available() < BLOCK_SIZE) {
 					// If the stream has ended, any remaining data indicates a truncated archive.
 					if (ended) {
-						if (available() > 0 && strict)
-							throw new Error("Tar archive is truncated.");
+						if (available() > 0 && strict) throw truncateErr;
 
-						eof = true;
+						done = true;
 						return undefined;
 					}
 
@@ -77,8 +83,8 @@ export function createUnpacker(options: DecoderOptions = {}) {
 					if (available() < BLOCK_SIZE * 2) {
 						// Not enough data to check for the second block.
 						if (ended) {
-							if (strict) throw new Error("Tar archive is truncated.");
-							eof = true;
+							if (strict) throw truncateErr;
+							done = true;
 							return undefined;
 						}
 
@@ -89,6 +95,7 @@ export function createUnpacker(options: DecoderOptions = {}) {
 					const eofBlock = peek(BLOCK_SIZE * 2) as Uint8Array;
 					if (isZeroBlock(eofBlock.subarray(BLOCK_SIZE))) {
 						discard(BLOCK_SIZE * 2); // Valid EOF.
+						done = true;
 						eof = true;
 						return undefined;
 					}
@@ -117,7 +124,7 @@ export function createUnpacker(options: DecoderOptions = {}) {
 
 					// Check if we have enough data for the meta entry's body using total size.
 					if (available() < BLOCK_SIZE + paddedSize) {
-						if (ended && strict) throw new Error("Tar archive is truncated.");
+						if (ended && strict) throw truncateErr;
 						return null;
 					}
 
@@ -175,11 +182,6 @@ export function createUnpacker(options: DecoderOptions = {}) {
 			return fed;
 		},
 
-		/** Checks if the body of the current entry has been fully consumed. */
-		isBodyComplete(): boolean {
-			return !currentEntry || currentEntry.remaining === 0;
-		},
-
 		/**
 		 * Skips the remaining padding for the current entry.
 		 * Returns true if padding was fully skipped, false if more data is needed.
@@ -210,19 +212,24 @@ export function createUnpacker(options: DecoderOptions = {}) {
 		skipEntry(): boolean {
 			if (state !== STATE_BODY || !currentEntry) return true;
 
-			while (!unpacker.isBodyComplete()) {
-				const fed = unpacker.streamBody(() => true);
-				if (fed === 0) return false;
+			const toDiscard = Math.min(currentEntry.remaining, available());
+			if (toDiscard > 0) {
+				discard(toDiscard);
+				currentEntry.remaining -= toDiscard;
 			}
 
+			if (currentEntry.remaining > 0) return false;
 			return unpacker.skipPadding();
 		},
 
 		validateEOF() {
-			if (strict && available() > 0) {
-				const remaining = pull(available()) as Uint8Array;
-				if (remaining.some((byte) => byte !== 0))
-					throw new Error("Invalid EOF.");
+			if (strict) {
+				if (!eof) throw truncateErr;
+				if (available() > 0) {
+					const remaining = pull(available()) as Uint8Array;
+					if (remaining.some((byte) => byte !== 0))
+						throw new Error("Invalid EOF.");
+				}
 			}
 		},
 	};
