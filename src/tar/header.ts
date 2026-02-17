@@ -153,6 +153,8 @@ export function parseUstarHeader(
 
 	const magic = readString(block, USTAR_MAGIC_OFFSET, USTAR_MAGIC_SIZE);
 
+	if (isBodyless(header)) header.size = 0;
+
 	// Both GNU and USTAR formats have uname and gname.
 	if (magic.trim() === "ustar") {
 		header.uname = readString(block, USTAR_UNAME_OFFSET, USTAR_UNAME_SIZE);
