@@ -218,8 +218,10 @@ export const createPathCache = (
 				case DIRECTORY: {
 					pathConflicts.set(normalizedName, DIRECTORY);
 
+					// Strip SUID/SGID/Sticky bits for security.
+					const safeMode = mode ? mode & 0o777 : undefined;
 					// Create directory with mode from header or default.
-					await prepareDirectory(outPath, dmode ?? mode);
+					await prepareDirectory(outPath, dmode ?? safeMode);
 
 					// Set directory modification time.
 					if (mtime)

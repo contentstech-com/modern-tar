@@ -129,8 +129,13 @@ export function unpackTar(
 
 					// Only file entries return a path for streaming.
 					if (outPath) {
+						// Strip SUID/SGID/Sticky bits from header mode for security (limit to 0o777).
+						const safeMode = transformedHeader.mode
+							? transformedHeader.mode & 0o777
+							: undefined;
+
 						const fileStream = createFileSink(outPath, {
-							mode: options.fmode ?? transformedHeader.mode ?? undefined,
+							mode: options.fmode ?? safeMode,
 							mtime: transformedHeader.mtime ?? undefined,
 						});
 

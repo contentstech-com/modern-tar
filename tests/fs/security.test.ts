@@ -2520,4 +2520,38 @@ describe("security", () => {
 			expect(Object.prototype.polluted).toBeUndefined();
 		});
 	});
+
+	describe("privilege escalation prevention", () => {
+		it("should strip SUID/SGID bits from extracted files", async () => {
+			const destDir = path.join(tmpDir, "suid-check");
+			await fs.mkdir(destDir, { recursive: true });
+
+			const entries: TarEntry[] = [
+				{
+					header: {
+						name: "suid-file",
+						size: 0,
+						type: "file",
+						// 0o4755 = SUID + rwxr-xr-x
+						mode: 0o4755,
+						mtime: new Date(),
+						uid: 0,
+						gid: 0,
+					},
+					body: "",
+				},
+			];
+
+			const tarBuffer = await packTar(entries);
+			const unpackStream = unpackTar(destDir);
+			await pipeline(Readable.from([tarBuffer]), unpackStream);
+
+			const stats = await fs.stat(path.join(destDir, "suid-file"));
+
+			// Verify SUID bit is stripped (0o4000)
+			expect(stats.mode & 0o4000).toBe(0);
+			// Verify SGID bit is stripped (0o2000)
+			expect(stats.mode & 0o2000).toBe(0);
+		});
+	});
 });
