@@ -368,6 +368,49 @@ describe("PAX format support", () => {
 			expect(extracted[1].header.type).toBe("symlink");
 		});
 
+		it("uses PAX for multi-byte filenames under 100 chars but over 100 bytes", async () => {
+			// Korean chars are 3 bytes each in UTF-8.
+			// 34 chars × 3 bytes = 102 bytes > 100 byte USTAR limit, but only 34 chars.
+			const koreanName = "가".repeat(34);
+
+			const entries: TarEntry[] = [
+				{
+					header: { name: koreanName, size: 4, type: "file" },
+					body: "test",
+				},
+			];
+
+			const buffer = await packTar(entries);
+			const extracted = await unpackTar(buffer);
+
+			expect(extracted).toHaveLength(1);
+			expect(extracted[0].header.name).toBe(koreanName);
+			expect(extracted[0].header.pax?.path).toBe(koreanName);
+			expect(decoder.decode(extracted[0].data)).toBe("test");
+		});
+
+		it("uses PAX for multi-byte linkname under 100 chars but over 100 bytes", async () => {
+			const koreanLink = "가".repeat(34);
+
+			const entries: TarEntry[] = [
+				{
+					header: {
+						name: "my-symlink",
+						type: "symlink",
+						linkname: koreanLink,
+						size: 0,
+					},
+				},
+			];
+
+			const buffer = await packTar(entries);
+			const extracted = await unpackTar(buffer);
+
+			expect(extracted).toHaveLength(1);
+			expect(extracted[0].header.linkname).toBe(koreanLink);
+			expect(extracted[0].header.pax?.linkpath).toBe(koreanLink);
+		});
+
 		it("handles Unicode characters in filenames with correct PAX record byte lengths", async () => {
 			// Test filenames with multi-byte Unicode characters (emojis)
 			const nameWithEmoji = "long_filename_ending_with_😀";
